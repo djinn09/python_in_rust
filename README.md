@@ -1,6 +1,6 @@
 # Python Parsing and Transformation in Rust
 
-This project demonstrates several different methods for parsing and manipulating Python code in a Rust application.
+This project demonstrates three different methods for parsing and manipulating Python code in a Rust application.
 
 ## 1. `tree-sitter` for Concrete Syntax Trees (CST)
 
@@ -59,11 +59,11 @@ fn main() {
 
 The `PyO3` crate allows for seamless interoperability between Rust and Python. By leveraging `PyO3`, we can directly call Python libraries like `LibCST` from within a Rust application. This approach is powerful because it gives us access to the full `LibCST` API for round-trip parsing and modification, while still writing our main application in Rust.
 
-This method requires a Python environment with `LibCST` installed.
+This method requires a Python environment with `LibCST` installed. We use a Python helper module to define the transformation logic, which is then called from Rust.
 
 ### Setup
 
-Before running the examples, you need to set up a Python virtual environment and install the necessary dependencies:
+Before running the example, you need to set up a Python virtual environment and install the necessary dependencies:
 
 ```bash
 # Create and activate a Python virtual environment
@@ -74,11 +74,7 @@ source .venv/bin/activate
 pip install libcst
 ```
 
-### Option A: Python Helper Module (Recommended)
-
-This approach uses a separate Python helper module (`libcst_helper.py`) to define the transformation logic. This is the recommended approach for maintainability, as it keeps the Python and Rust code separate.
-
-#### Python Helper: `libcst_helper.py`
+### Python Helper: `libcst_helper.py`
 
 This file contains the core `LibCST` transformation logic. We define a `CSTTransformer` that prepends a comment to every function definition.
 
@@ -111,7 +107,7 @@ def transform_code(source: str, comment_text: str = "# Auto-prepended comment") 
     return new_module.code
 ```
 
-#### Rust Example: `libcst_pyo3_example.rs`
+### Rust Example: `libcst_pyo3_example.rs`
 
 The Rust binary imports the `libcst_helper.py` module and calls the `transform_code` function to perform the transformation.
 
@@ -146,61 +142,6 @@ def add(x, y):
 
         println!("--- Transformed code ---\n{}\n", transformed);
 
-        Ok(())
-    })
-}
-```
-
-### Option B: Inline Transformer
-
-This approach defines and executes the `LibCST` transformer directly within the Rust code. This can be useful for smaller, self-contained transformations where a separate Python file might be overkill.
-
-#### Rust Example: `libcst_inline_example.rs`
-
-```rust
-use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
-
-fn main() -> PyResult<()> {
-    let source = r#"
-def foo():
-    return 1
-"#;
-
-    Python::with_gil(|py| -> PyResult<()> {
-        // Put current dir on sys.path so Python package imports resolve (if needed)
-        let sys = py.import("sys")?;
-        let path: &pyo3::types::PyList = sys.getattr("path")?.downcast()?;
-        path.insert(0, ".")?;
-
-        // small Python script that defines transformer and a function to call it
-        let code = r#"
-import libcst as cst
-
-class PrependCommentTransformer(cst.CSTTransformer):
-    def __init__(self, comment_text):
-        self.comment_text = comment_text
-
-    def leave_FunctionDef(self, original_node, updated_node):
-        new_leading = (cst.EmptyLine(comment=cst.Comment(self.comment_text)),) + tuple(original_node.leading_lines)
-        return updated_node.with_changes(leading_lines=new_leading)
-
-def transform_code(src, comment_text):
-    module = cst.parse_module(src)
-    transformer = PrependCommentTransformer(comment_text)
-    new_module = module.visit(transformer)
-    return new_module.code
-"#;
-
-        // Execute the code in a fresh module context
-        let locals = PyDict::new(py);
-        py.run(code, None, Some(locals))?;
-
-        // Extract the defined function and call it
-        let transform = locals.get_item("transform_code").expect("transform_code not found");
-        let transformed: String = transform.call1((source, "# PREPENDED INLINE"))?.extract()?;
-
-        println!("--- Transformed (inline) ---\n{}\n", transformed);
         Ok(())
     })
 }
